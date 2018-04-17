@@ -7,6 +7,8 @@
 //
 /////////////////////////////////////////
 
+#define alexnet //alexnet
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,9 +67,9 @@ const char *vendor_name = "Intel";
 #define MEAN_DATA_CHANNEl 3
 #define PICTURE_NUM 8000
 #define MAX_PIC_NUM 50000
-const char *mean_data_file_path    = "./data/imagenet/mean_data.dat";
-const char *synset_word_file_path  = "./data/imagenet/synset_words.txt";
-const char *LabelPath		       = "./data/imagenet/val.txt";
+const char *mean_data_file_path    = "../data/imagenet/mean_data.dat";
+const char *synset_word_file_path  = "../data/imagenet/synset_words.txt";
+const char *LabelPath		       = "../data/imagenet/val.txt";
 char  picture_file_path_head[100]  = "/home/dwang/Work/imagenet/ilsvrc2012/ILSVRC2012_img_val/ILSVRC2012_val_";
 char  picture_file_path[100];
 int   label[MAX_PIC_NUM]={0};
@@ -77,7 +79,7 @@ DTYPE searchTop[1024];
 float accuracy1=0;
 float accuracy5=0;
 
-
+#ifdef alexnet
 // AlexNet
 // Original problem size
 // File size is in num of DTYPE numbers
@@ -86,13 +88,12 @@ float accuracy5=0;
 #define WEIGHTS_FILE_SIZE 61063552  //fc8-1024
 #define LAYER_NUM         8
 #define CONV_NUM          5
-const char *weight_file_path = "./data/data_alex/weights.dat";
-const char *input_file_path = "./data/data_alex/image.dat";
-const char *ref_file_path = "./data/data_alex/fc8.dat";
-const char *dump_file_path = "./result_dump.txt";
+const char *weight_file_path = "../data/data_alex/weights.dat";
+const char *input_file_path = "../data/data_alex/image.dat";
+const char *ref_file_path = "../data/data_alex/fc8.dat";
+const char *dump_file_path = "../result_dump.txt";
 
-
-/*
+#elif defined(vgg)
 // VGG16
 // Original problem size
 // File size is in num of DTYPE numbers
@@ -101,11 +102,11 @@ const char *dump_file_path = "./result_dump.txt";
 #define LAYER_NUM         16
 #define CONV_NUM          13
 
-const char *weight_file_path = "./data/data_vgg/weights.dat";
-const char *input_file_path = "./data/data_vgg/image.dat";
-const char *ref_file_path = "./data/data_vgg/fc8.dat";
-const char *dump_file_path = "./result_dump.txt";
-*/
+const char *weight_file_path = "../data/data_vgg/weights.dat";
+const char *input_file_path = "../data/data_vgg/image.dat";
+const char *ref_file_path = "../data/data_vgg/fc8.dat";
+const char *dump_file_path = "../result_dump.txt";
+#endif
 
 // Configuration file instructions
 enum config_item{
@@ -115,7 +116,7 @@ data_w, data_h, data_n, weight_w, weight_h, weight_n, weight_m, bias_size, //mem
 
 memrd_src, //"0"-> data_buf  "1"-> output_buf  "2"->"fc_1_buffer"  "3"->"fc_2_buffer"
 
-conv_x, conv_y, conv_z, conv_stride, conv_padding, conv_split, conv_relu, //Conv Parameters
+conv_x, conv_y, conv_z, conv_stride, conv_padding, conv_split, conv_relu, //Conv Parameters // conv_z=weight_m
 
 pool_on, pool_x, pool_y, pool_z, pool_size, pool_stride, // Pooling Parameters
 

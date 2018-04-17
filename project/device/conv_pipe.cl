@@ -32,6 +32,8 @@
  */
 
 #define USE_ROM 
+#define write_channel_altera write_channel_intel
+#define read_channel_altera read_channel_intel
 
 // The following macros are used for debug
 //#define DEBUG_MEMRD
@@ -44,7 +46,7 @@
 #include "hw_param.cl"
 #include "rtl_lib.h"
 
-#pragma OPENCL_EXTENSION cl_altera_channels : enable
+#pragma OPENCL EXTENSION cl_intel_channels : enable
 
 // Define the precision of the data-path
 typedef char DPTYPE;
@@ -105,26 +107,26 @@ __attribute__((task))
 __attribute__((max_global_work_dim(0)))
 void memRead(
 			// Params Ports
-			uchar  data_dim1,
+			uchar  data_dim1, // input data dimension 
 			uchar  data_dim2,
 			ushort data_dim1xdim2,
-			uchar  weight_dim1,
+			uchar  weight_dim1, // weight dimension
 			uchar  weight_dim2,
 			ushort weight_dim3,
-			ushort weight_dim4_div_lane, // avoid generating divider
+			ushort weight_dim4_div_lane, // avoid generating divider // weight_m(= conv_z) divided by lane // output_z per lane
 			uchar  weight_dim1x2,
 			uint   weight_dim1x2x3,
-			uchar  conv_x,
+			uchar  conv_x,		// output dimension	
 			//uchar  conv_y,           // not used in this version
 			uchar  stride,
 			uchar  padding,
 			uchar  split,
-			uchar  group_num_x,
+			uchar  group_num_x,		// number of groups doing sliding window
 			uchar  group_num_y,
-			uchar  group_rem_size_x,
+			uchar  group_rem_size_x, 	// remaining parts outside sliding window
 			//uchar  group_rem_size_y, // not used in this version
 			uint   group_rem_size_xyz,
-			uchar  win_size_x,
+			uchar  win_size_x,		// window size //weight_w +(CONV_GP_SIZE_X-1)*stride
 			uchar  win_size_y,
 			uint   win_size_xyz,  
 			// Data Ports
@@ -180,11 +182,11 @@ void memRead(
 			else{
 				#pragma unroll
 				for(unsigned char vv=0; vv<VEC_SIZE; vv++){
-					data_vec.data[vv] = CZERO;
+					data_vec.data[vv] = CZERO; //0
 				}
 			}
 			
-			win_buffer[0][win_itm_z*win_size_y*win_size_x + win_itm_y*win_size_x + win_itm_x] = data_vec;
+			win_buffer[0][win_itm_z*win_size_y*win_size_x + win_itm_y*win_size_x + win_itm_x] = data_vec; 
 
 			}
 		}
@@ -207,10 +209,10 @@ void memRead(
 		// special case when split==1, the output feature maps depend on only half the input feature maps
 		if(split==0)
 			data_offset = 0;
-		else if(out_idx_z_winbuf<(weight_dim4_div_lane>>1)) // the lower half of the output feature maps depend on the lower half of the input
+		else if(out_idx_z_winbuf<(weight_dim4_div_lane>>1)) // the upper half of the output feature maps depend on the upper half of the input
 			data_offset = 0;
 		else
-			data_offset = weight_dim3/VEC_SIZE;	// the upper half of the output feature maps depend on the upper half of the input
+			data_offset = weight_dim3/VEC_SIZE;	// the lower half of the output feature maps depend on the lower half of the input
 	
 				flag = out_idx_xyz & 0x01; //ping-pong flag
 				
@@ -228,24 +230,26 @@ void memRead(
 				
 				
 				if(gp_num_x==group_num_x-1)
-					item_loop_bound = win_size_x>=group_rem_size_x?(win_size_xyz/VEC_SIZE):(group_rem_size_xyz/VEC_SIZE);
+					item_loop_bound = win_size_x>=group_rem_size_x?(win_size_xyz/VEC_SIZE):(group_rem_size_xyz/VEC_SIZE); // last group deal with the remining convolution
+																														// win_buffer can be use for the remaining convolution if it's 
+																														// large enough, otherwise use precompute parameter 
 				else{
-					item_loop_bound = (weight_dim1x2x3*CONV_GP_SIZE_Y*CONV_GP_SIZE_X/VEC_SIZE);
+					item_loop_bound = (weight_dim1x2x3*CONV_GP_SIZE_Y*CONV_GP_SIZE_X/VEC_SIZE);	// number of items to be computed within one sliding window group
 				}
 
-				#pragma ivdep array(win_buffer)
-				#pragma ivdep array(weight_buffer)
+				#pragma ivdep array(win_buffer) // ignore dependency of win_buffer between loops 
+				#pragma ivdep array(weight_buffer) // ignore dependency of weight_buffer between loops 
 				Item:for(unsigned int  win_itm_xyz=0; win_itm_xyz<item_loop_bound; win_itm_xyz++){
 
-							// Winbuffer loading operations
-							if(win_itm_z<weight_dim3/VEC_SIZE){
-
-								feature_idx_dim1 = win_itm_x+gp_num_x_winbuf*CONV_GP_SIZE_X*stride;
+							// Winbuffer loading operations // Prefetch
+							if(win_itm_z<weight_dim3/VEC_SIZE){ // until the buffer is fully loaded
+															// gp_num_x_winbuf starts from 1: load for the next loop
+								feature_idx_dim1 = win_itm_x+gp_num_x_winbuf*CONV_GP_SIZE_X*stride; // window item position + window group offset // not dimension
 								feature_idx_dim2 = win_itm_y+gp_num_y_winbuf*CONV_GP_SIZE_Y*stride;
 								feature_idx_dim3 = win_itm_z;
 
 								if((feature_idx_dim1>=padding && feature_idx_dim1<data_dim1+padding) && (feature_idx_dim2>=padding && feature_idx_dim2<data_dim2+padding)){
-								
+									// within boundary
 									data_vec = bottom[data_offset*data_dim1xdim2 + feature_idx_dim3*data_dim1xdim2 + (feature_idx_dim2-padding)*data_dim1 + (feature_idx_dim1-padding)];
 																	}
 								else{ // for padding (feature_idx<padding or data_dim+padding<=feature_idx<data_dim+2*padding)
@@ -258,7 +262,7 @@ void memRead(
 								win_buffer[(~flag)&0x01][win_itm_z*win_size_y*win_size_x + win_itm_y*win_size_x + win_itm_x] = data_vec;
 
 								// used as loop counters
-								if((win_itm_z==weight_dim3/VEC_SIZE-1) && (win_itm_y==win_size_y-1) && (win_itm_x==win_size_x-1))
+								if((win_itm_z==weight_dim3/VEC_SIZE-1) && (win_itm_y==win_size_y-1) && (win_itm_x==win_size_x-1)) // reached the end
 									win_itm_z = 0;
 								else if((win_itm_y==win_size_y-1) && (win_itm_x==win_size_x-1))
 									win_itm_z++;
@@ -276,8 +280,8 @@ void memRead(
 							}
 							
 							// Load weight into weight buffer
-							if(gp_item_idx_x==0){
-								
+							if(gp_item_idx_x==0){ // first window position in the group
+								// out_idx_z: global group counter // output_idx_dim1/2/3: item loop counter
 								weight_ch_vec = weights[out_idx_z*weight_dim1x2x3/VEC_SIZE + output_idx_dim3*weight_dim1x2 + output_idx_dim2*weight_dim1 + output_idx_dim1];
 								weight_buffer[output_idx_dim3*weight_dim2*weight_dim1 + output_idx_dim2*weight_dim1 + output_idx_dim1] = weight_ch_vec;
 
@@ -286,7 +290,7 @@ void memRead(
 							// In this version, grouping is only performed in row (x) direction
 							if(gp_num_x*CONV_GP_SIZE_X+gp_item_idx_x<conv_x){
                     
-								if(output_idx_dim1==0 && output_idx_dim2==0 && output_idx_dim3==0){
+								if(output_idx_dim1==0 && output_idx_dim2==0 && output_idx_dim3==0){ // only one bias for one feature map
 									bias_ch_in = bias[out_idx_z];
 									write_channel_altera(bias_ch, bias_ch_in);
 									//#ifdef DEBUG_MEMRD
@@ -295,6 +299,7 @@ void memRead(
 								}
 
 								// data
+								// buffer data loaded from privious group loop
 								data_vec = win_buffer[flag][output_idx_dim3*win_size_y*win_size_x + output_idx_dim2*win_size_x + (output_idx_dim1+gp_item_idx_x*stride)];
 								#pragma unroll
 								for(unsigned char ll=0; ll<LANE_NUM; ll++){
@@ -380,7 +385,7 @@ __attribute__((max_global_work_dim(0)))
 void coreConv(
 			// Params Ports
 			uint  output_num,
-			uint  conv_loop_cnt,
+			uint  conv_loop_cnt, // weight_w*weight_h*weight_n/VEC_SIZE
 			uint  contol, //[0]-> relu  [1]->bypass pooling
 			char  frac_w,
 			char  frac_din,
@@ -417,19 +422,19 @@ void coreConv(
 			}
 		}
 
-		for(int j=0; j<conv_loop_cnt; j++){
+		for(int j=0; j<conv_loop_cnt; j++){// one 3d weight convolution
 
 			mac_data = read_channel_altera(data_ch);
 			mac_weight = read_channel_altera(weight_ch);
 
 			#pragma unroll
 			for(unsigned char ll=0; ll<LANE_NUM; ll++){
-				
-				lane_accum[ll] = (MASK_ACCUM & accum_piped[ll][PIPE_DEPTH-1]) + (MASK_MULT & mac(mac_data.lane[ll], mac_weight.lane[ll]));
+				//previous stored data + mult-add(data, weight)
+				lane_accum[ll] = (MASK_ACCUM & accum_piped[ll][PIPE_DEPTH-1]) + (MASK_MULT & mac(mac_data.lane[ll], mac_weight.lane[ll])); 
 			
 				#pragma unroll
-				for(unsigned int p=PIPE_DEPTH-1; p>0; p-- ){
-					accum_piped[ll][p] = MASK_ACCUM & accum_piped[ll][p-1];
+				for(unsigned int p=PIPE_DEPTH-1; p>0; p-- ){ 
+					accum_piped[ll][p] = MASK_ACCUM & accum_piped[ll][p-1]; // shift data //PIPE_DEPTH = 6
 				}
 				
 				accum_piped[ll][0] = MASK_ACCUM & lane_accum[ll];
@@ -457,7 +462,7 @@ void coreConv(
 			
 			conv_with_rnd_bit[ll] = (conv_sign_exten[ll] | (conv_out[ll]>>(frac_w+frac_din-frac_dout-1))) + 0x01;
 
-			if(conv_with_rnd_bit[ll]>=256)
+			if(conv_with_rnd_bit[ll]>=256) // overflow
 				conv_sum_bias[ll] = MASK9B & 0xFF;
 			else if(conv_with_rnd_bit[ll]<-256)
 				conv_sum_bias[ll] = MASK9B & 0x100;
@@ -469,7 +474,7 @@ void coreConv(
 			// Relu operation
 			if((contol&0x01)==0x01){
 				if((conv_final[ll]&MASKSIGN)==MASKSIGN)
-					conv_ch_in.lane[ll] = 0;
+					conv_ch_in.lane[ll] = 0; // negative
 				else
 					conv_ch_in.lane[ll] = conv_final[ll];
 			}
